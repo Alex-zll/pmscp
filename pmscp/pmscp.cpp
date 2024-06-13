@@ -132,7 +132,7 @@ namespace pmscp {
 		double solve(Sets& X, PSetCovering& psc, function<long long()> restMilliSec, int seed) {
 			initRand(seed);
 			double epsilon = 0.6; //ε表示贪心选择的概率
-			int omega = 30, beta = 100; // ω表示局部搜索的迭代轮次；β表示禁忌搜索的深度
+			int omega = 300, beta = 1000; // ω表示局部搜索的迭代轮次；β表示禁忌搜索的深度
 			// 首先对覆盖集进行化简
 			PSetCovering new_psc = Reduction(psc);
 
@@ -161,7 +161,7 @@ namespace pmscp {
 
 			auto LearningDrivenInitialization = [&]() { //使用 psc; epsilon; eta三个变量
 				Sets tmpX;
-				unordered_set<int> tmpS;
+				unordered_set<SetId> tmpS;
 				vector<int> tmpVisE(new_psc.elemNum, 0);
 				
 				for (int i = 0; i < new_psc.setNum; ++i)
@@ -173,11 +173,12 @@ namespace pmscp {
 					double rNum = fastRand(10000) / 10000.0;
 					if (rNum < epsilon) {
 						// 这是一个可能改进的地方, 使用堆会提高性能
+						// 做一些修改
 						double maxP = 0;
-						for (auto inflect = new_psc.SMap.begin(); inflect != new_psc.SMap.end(); ++inflect) {
-							SetId sid1 = (*inflect).first;
-							int idx = (*inflect).second;
-							if (maxP < eta[idx] && tmpS.find(idx) != tmpS.end()) {
+						for (auto inflect = tmpS.begin(); inflect != tmpS.end(); ++inflect) {
+							SetId sid1 = (*inflect);
+							int idx = new_psc.SMap[sid1];
+							if (maxP < eta[idx]) {
 								maxP = eta[idx];
 								sid = sid1;
 							}
@@ -193,7 +194,7 @@ namespace pmscp {
 					int idx = new_psc.SMap[sid];
 					for (auto eid = new_psc.coveringSet[idx].begin(); eid != new_psc.coveringSet[idx].end(); ++eid) {
 						if (tmpVisE[*eid] == 0)
-							gainCnt += new_psc.profit[*eid];	
+							gainCnt += new_psc.profit[*eid];	 
 					}
 					rNum = fastRand(10000) / 10000.0;
 					if (gainCnt - new_psc.SCost[idx] > 0 && rNum < eta[idx]) {
@@ -281,7 +282,10 @@ namespace pmscp {
 						tabuList[bestSet] = iterCnt + fastRand(1, 6); //这个禁忌值偏大了？
 					else tabuList[bestSet] = iterCnt + new_psc.SMap.size();
 					
-					if (fb < f_X1) {
+					if (fb - f_X1 < 0.0001 && fb - f_X1 > -0.0001 || fb > f_X1) {
+						non_improve += 1;
+					}
+					else {
 						Xb = X1;
 						fb = f_X1;
 						tmpDel = delta;
@@ -289,7 +293,6 @@ namespace pmscp {
 						tmpvisg = visG;
 						non_improve = 0;
 					}
-					else non_improve += 1;
 				}
 				X1 = Xb;
 				f_X1 = fb;
@@ -298,6 +301,7 @@ namespace pmscp {
 				visE = tmpvise;
 			};
 
+			// 需要一个禁忌操作吗？
 			auto SwapDescentSearch = [&](Sets& X1, double& f_X1) {
 				Sets Xb = X1;
 				double fb = f_X1;
@@ -516,7 +520,8 @@ namespace pmscp {
 				while (non_improve < omega && restMilliSec() > 0) {
 					iter_cnt += 1;
 					TwoPhaseLS(Xp, fp);
-					if (fp - tmp_f >= -0.0001 && fp - tmp_f <= 0.0001 || fp < tmp_f) non_improve += 1;
+					if (fp - tmp_f >= -0.0001 && fp - tmp_f <= 0.0001) non_improve += 1;
+					else if (fp < tmp_f) non_improve += 1;
 					else {
 						// 更新γ
 						if (t_type == 0) d1 += 1;
@@ -524,11 +529,11 @@ namespace pmscp {
 						gamma[0] = (d0 + d1) / (2 * d0 + d1 + d2);
 						gamma[1] = 1 - gamma[0];
 
+						// 更新eta
 						for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 							int j = (*setN).second;
 							SetId sid = (*setN).first;
-							// 更新eta
-							double phi1 = 0.2, phi2 = 0.3, phi3 = 0.3;
+							double phi1 = 0.2, phi2 = 0.3, phi3 = 0.3; 
 							double alpha = 0.95;
 							bool existX0 = Xp.find(sid) != Xp.end(), existBX = tmpX.find(sid) != tmpX.end();
 							if (existX0 && existBX) eta[j] = phi1 + (1 - phi1) * eta[j];
@@ -546,7 +551,7 @@ namespace pmscp {
 						tmpDel = delta;
 						tmpvise = visE;
 						tmpvisG = visG;
-						non_improve = 0;
+						non_improve = 0; 
 						cerr << "当前最好结果为: " << tmp_f << endl;
 					}
 					
@@ -569,7 +574,7 @@ namespace pmscp {
 			while (restMilliSec() > 0) {
 				// 获得初始解后，要确定δ向量和初始解的收益值，即f_X0
 				double f_X0 = 0;
-				X0 = LearningDrivenInitialization();  
+				X0 = LearningDrivenInitialization();
 				// 计算收益值
 				f_X0 = calProfit(X0, new_psc);
 				// 计算δ函数 和visG、visE
@@ -608,12 +613,19 @@ namespace pmscp {
 					cerr << "增量计算有问题！" << endl;
 					cerr << "realf :" << testf << " f_X0: " << f_X0 << endl;
 				}
-					
+				
+				// 确定当前解与之前得到的解的相似度
+				int sameCnt = 0;
+				for (auto s = X0.begin(); s != X0.end(); ++s) {
+					if (best_X.find(*s) != best_X.end()) sameCnt += 1;
+				}
+				cerr << "局部最优解的相似度为：" << sameCnt / (double)best_X.size() << endl;
+				
 				if (f_X0 > best_f) {
 					best_X = X0;
 					best_f = f_X0;
-					
 				} 
+				cerr << "当前解的大小为：" << best_X.size() << endl;
 				cerr << "当前最大收益值为：" << best_f << endl << endl;
 			}
 			double real_f = calProfit(best_X, new_psc);
