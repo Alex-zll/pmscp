@@ -139,7 +139,7 @@ void test(string path, long long secTimeout, int seed) {
 int main(int argc, char* argv[]) {
 	if (argc < 2) {
 		string loadFile = "D:/0HustWork/hust-exercise/PMSCP_data/PMSCP-main/instances1/A1.txt";
-		long long secTimeout = 8;
+		long long secTimeout = 800;
 		test(loadFile, secTimeout);
 	}
 	else {

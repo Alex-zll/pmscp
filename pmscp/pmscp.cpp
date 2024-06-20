@@ -213,22 +213,27 @@ namespace pmscp {
 				// 根据group调整delta
 				int curG = set2G[idx];
 				bool BexistX = X1.find(bestSet) != X1.end();
-				for (auto s = new_psc.group[curG].begin(); s != new_psc.group[curG].end(); ++s) {
-					if (*s == bestSet) continue;
-					bool tmpeX = X1.find(*s) != X1.end();
-					if (tmpeX && BexistX && visG[curG] == 2 || visG[curG] == 0) delta[new_psc.SMap[*s]] += new_psc.GCost;
-					else if (BexistX && (!tmpeX) && visG[curG] == 1 || (!BexistX) && tmpeX && visG[curG] == 1)
-						delta[new_psc.SMap[*s]] -= new_psc.GCost;
+
+				if (visG[curG] <= 2) {
+					for (auto s = new_psc.group[curG].begin(); s != new_psc.group[curG].end(); ++s) {
+						if (*s == bestSet) continue;
+						bool tmpeX = X1.find(*s) != X1.end();
+						if (tmpeX && BexistX && visG[curG] == 2 || visG[curG] == 0) delta[new_psc.SMap[*s]] += new_psc.GCost;
+						else if (visG[curG] == 1 && (BexistX && (!tmpeX) || (!BexistX) && tmpeX))
+							delta[new_psc.SMap[*s]] -= new_psc.GCost;
+					}
 				}
 
 				// 根据element调整delta
 				for (auto e = new_psc.coveringSet[idx].begin(); e != new_psc.coveringSet[idx].end(); ++e) {
-					for (auto s = e2Set[*e].begin(); s != e2Set[*e].end(); ++s) {
-						if (*s == bestSet) continue;
-						bool tmpeX = X1.find(*s) != X1.end();
-						if (tmpeX && BexistX && visE[*e] == 2 || visE[*e] == 0) delta[new_psc.SMap[*s]] -= new_psc.profit[*e];
-						else if (BexistX && (!tmpeX) && visE[*e] == 1 || (!BexistX) && tmpeX && visE[*e] == 1)
-							delta[new_psc.SMap[*s]] += new_psc.profit[*e];
+					if (visE[*e] <= 2) {
+						for (auto s = e2Set[*e].begin(); s != e2Set[*e].end(); ++s) {
+							if (*s == bestSet) continue;
+							bool tmpeX = X1.find(*s) != X1.end();
+							if (tmpeX && BexistX && visE[*e] == 2 || visE[*e] == 0) delta[new_psc.SMap[*s]] -= new_psc.profit[*e];
+							else if (BexistX && (!tmpeX) && visE[*e] == 1 || (!BexistX) && tmpeX && visE[*e] == 1)
+								delta[new_psc.SMap[*s]] += new_psc.profit[*e];
+						}
 					}
 				}
 
@@ -282,7 +287,7 @@ namespace pmscp {
 						tabuList[bestSet] = iterCnt + fastRand(1, 6); //这个禁忌值偏大了？
 					else tabuList[bestSet] = iterCnt + new_psc.SMap.size();
 					
-					if (fb - f_X1 < 0.0001 && fb - f_X1 > -0.0001 || fb > f_X1) {
+					if (fabs(fb - f_X1) < 0.0001 || fb > f_X1) {
 						non_improve += 1;
 					}
 					else {
@@ -308,7 +313,7 @@ namespace pmscp {
 				vector<double> tmpDel = delta;
 				vector<int> tmpvise = visE;
 				vector<int> tmpvisg = visG;
-				Sets Nx1;
+				Sets Nx1, tmpX = X1;
 
 				for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 					SetId sid = (*setN).first;
@@ -323,6 +328,8 @@ namespace pmscp {
 					non_improve = 1;
 					int bestS1, bestS2;
 					double bestdp = -1e8;
+					if (tmpX.size() == 0) continue;
+
 					//选择最佳邻域动作
 					for (auto s1 = X1.begin(); s1 != X1.end(); ++s1) {
 						int idx1 = new_psc.SMap[*s1];
@@ -350,8 +357,9 @@ namespace pmscp {
 							}
 						}
 					}
-					Nx1.insert(bestS1);
-					Nx1.erase(bestS2);
+					//tmpX.erase(bestS1);
+					Nx1.erase(bestS2);  //可以尝试只对Nx1做删除操作
+
 					// 以上动作执行完后，确定 s1，s2为最佳邻域动作，执行这些动作并修改相应的值即可
 					//f_X1 += delta[bestS1];
 					flip(X1, bestS1);
@@ -392,7 +400,9 @@ namespace pmscp {
 					FlipTabuSearch(X1, f_X1);
 					/*cerr << "after exe Tabu" << endl;
 					bool testDel1 = testDelta(X1, new_psc, delta);*/
+
 					SwapDescentSearch(X1, f_X1);
+					
 					//cerr << "after exe Swap" << endl;
 					//bool testDel2 = testDelta(X1, new_psc, delta);
 
@@ -418,6 +428,7 @@ namespace pmscp {
 			};
 
 			auto Perturbation = [&](Sets& tmpX, int& t_type, double& f_tmpX) {
+				
 				if (fastRand(10000) / 10000.0 < gamma[0]) {
 					// 执行Set_Pertubation
 					t_type = 0;
@@ -526,8 +537,9 @@ namespace pmscp {
 						// 更新γ
 						if (t_type == 0) d1 += 1;
 						else if (t_type == 1) d2 += 1;
-						gamma[0] = (d0 + d1) / (2 * d0 + d1 + d2);
+						gamma[0] = (d0 + d1) / (2 * d0 + d1 + d2); 
 						gamma[1] = 1 - gamma[0];
+						cerr << "gamma0: " << gamma[0] << endl;
 
 						// 更新eta
 						for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
