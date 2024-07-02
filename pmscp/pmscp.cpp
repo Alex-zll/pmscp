@@ -260,6 +260,7 @@ namespace pmscp {
 				int iterCnt = 0, non_improve = 0; //记录迭代轮次和未改进次数
 				Sets Xb = X1;
 				double fb = f_X1;
+				//加一点注释
 				vector<double> tmpDel = delta;
 				vector<int> tmpvise = visE;
 				vector<int> tmpvisg = visG;
