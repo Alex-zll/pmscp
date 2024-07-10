@@ -53,3 +53,7 @@ namespace pmscp {
 
 #endif // !PROFIT_MAXIMIZATION_FOR_SET_COVERING_PROBLEM_H
 
+// 到底是扰动问题还是局部搜索的问题？
+// 扰动幅度小导致搜索又回到之前的局部最优吗？
+// 局部搜索的过程中有什么细节上的问题？
+

@@ -98,7 +98,6 @@ namespace pmscp {
 			}
 			return true;
 		}
-		// 化简部分需要重写
 		PSetCovering Reduction(PSetCovering psc) {
 			//进行规约操作后，setNum、coveringSet、gourp、SCost都可能相应发生改变
 			int new_setNum = psc.setNum;
@@ -106,12 +105,11 @@ namespace pmscp {
 			// 首先确定要被删除的覆盖集
 			vector<int> delSets;
 			for (int sid = 0; sid < psc.setNum; ++sid) {
-				int pft = 0;
+				double pft = 0;
 				for (auto eid = psc.coveringSet[sid].begin(); eid != psc.coveringSet[sid].end(); ++eid) {
 					pft += psc.profit[*eid];
 				}
-				pft -= psc.SCost[sid];
-				if (pft <= 0) delSets.push_back(sid);
+				if (pft <= psc.SCost[sid]) delSets.push_back(sid);
 			}
 
 			// 依次删除这些覆盖集
@@ -135,20 +133,21 @@ namespace pmscp {
 			int omega = 300, beta = 1000; // ω表示局部搜索的迭代轮次；β表示禁忌搜索的深度
 			// 首先对覆盖集进行化简
 			PSetCovering new_psc = Reduction(psc);
+			//PSetCovering new_psc = psc;
 
 			Sets best_X, X0;
 			double best_f = 0; //记录最高的收益
 			vector<double> eta(new_psc.setNum, 0.5); //η表示初始化的历史信息向量
 			vector<double> gamma(2, 0.5); //γ表示扰动概率的向量
-			vector<int> visE(new_psc.elemNum, 0); //确定e被解中的几个集合覆盖
-			vector<int> visG(new_psc.groupNum, 0); //确定解中有多少集合属于同一个组
+			vector<unordered_set<SetId>> visE(new_psc.elemNum); //确定e被解中的哪几个集合覆盖
+			vector<unordered_set<SetId>> visG(new_psc.groupNum); //确定解中有哪些集合属于同一个组
 			vector<double> delta(new_psc.setNum, 0); //快速评估邻域解的质量
 			vector<int> set2G(new_psc.setNum); //确定覆盖集属于哪个组
 			vector<unordered_set<SetId>> e2Set(new_psc.elemNum); //确定element由哪些覆盖集所覆盖
 			double d0 = 50, d1 = 0, d2 = 0; //确定扰动的选择
 
 			for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
-				SetId sid = (*setN).first;
+				SetId sid = (*setN).first; 
 				int idx = (*setN).second;
 				for (auto e = new_psc.coveringSet[idx].begin(); e != new_psc.coveringSet[idx].end(); ++e)
 					e2Set[*e].insert(sid);
@@ -162,12 +161,11 @@ namespace pmscp {
 			auto LearningDrivenInitialization = [&]() { //使用 psc; epsilon; eta三个变量
 				Sets tmpX;
 				unordered_set<SetId> tmpS;
-				vector<int> tmpVisE(new_psc.elemNum, 0);
+				vector<int> tmpVisE(new_psc.elemNum, 0), tmpVisG(new_psc.groupNum, 0);
 				
-				for (int i = 0; i < new_psc.setNum; ++i)
-					if (new_psc.SMap.find(i) != new_psc.SMap.end()) 
-						tmpS.insert(new_psc.SMap[i]);
-
+				for (auto smp = new_psc.SMap.begin(); smp != new_psc.SMap.end(); ++smp) 
+					tmpS.insert((*smp).first);
+				
 				while (tmpS.size() > 0) {
 					SetId sid;
 					double rNum = fastRand(10000) / 10000.0;
@@ -196,16 +194,19 @@ namespace pmscp {
 						if (tmpVisE[*eid] == 0)
 							gainCnt += new_psc.profit[*eid];	 
 					}
+					/*if (tmpVisG[set2G[sid]] == 0) gainCnt -= new_psc.GCost;*/
 					rNum = fastRand(10000) / 10000.0;
-					if (gainCnt - new_psc.SCost[idx] > 0 && rNum < eta[idx]) {
+					if (gainCnt > new_psc.SCost[idx] && rNum < eta[idx]) {
 						tmpX.insert(sid);
+						tmpVisG[set2G[sid]] = 1;
 						for (auto eid = new_psc.coveringSet[idx].begin(); eid != new_psc.coveringSet[idx].end(); ++eid) 
 							tmpVisE[*eid] = 1;
 					} 
 				}
 				return tmpX;
 			};
-
+			
+			// flip也进行了改动，用于提升性能
 			auto flip = [&](Sets& X1, SetId bestSet) {
 				int idx = new_psc.SMap[bestSet];
 				// 调整自己的delta
@@ -214,42 +215,66 @@ namespace pmscp {
 				int curG = set2G[idx];
 				bool BexistX = X1.find(bestSet) != X1.end();
 
-				if (visG[curG] <= 2) {
-					for (auto s = new_psc.group[curG].begin(); s != new_psc.group[curG].end(); ++s) {
-						if (*s == bestSet) continue;
-						bool tmpeX = X1.find(*s) != X1.end();
-						if (tmpeX && BexistX && visG[curG] == 2 || visG[curG] == 0) delta[new_psc.SMap[*s]] += new_psc.GCost;
-						else if (visG[curG] == 1 && (BexistX && (!tmpeX) || (!BexistX) && tmpeX))
-							delta[new_psc.SMap[*s]] -= new_psc.GCost;
+				// 根据group调整delta
+				int sizeG = visG[curG].size();
+				if (sizeG == 2 && BexistX) {
+					for (auto s = visG[curG].begin(); s != visG[curG].end(); ++s) {
+						if (*s != bestSet) delta[new_psc.SMap[*s]] += new_psc.GCost;
 					}
+				}
+				else if (sizeG == 1) {
+					if (!BexistX) {
+						auto s = visG[curG].begin();
+						delta[new_psc.SMap[*s]] -= new_psc.GCost;
+					}
+					else {
+						for (auto s = new_psc.group[curG].begin(); s != new_psc.group[curG].end(); ++s)
+							if(*s != bestSet) delta[new_psc.SMap[*s]] -= new_psc.GCost;
+					}
+				}
+				else if (sizeG == 0) {
+					for (auto s = new_psc.group[curG].begin(); s != new_psc.group[curG].end(); ++s)
+						if(*s != bestSet) delta[new_psc.SMap[*s]] += new_psc.GCost;
 				}
 
 				// 根据element调整delta
 				for (auto e = new_psc.coveringSet[idx].begin(); e != new_psc.coveringSet[idx].end(); ++e) {
-					if (visE[*e] <= 2) {
-						for (auto s = e2Set[*e].begin(); s != e2Set[*e].end(); ++s) {
-							if (*s == bestSet) continue;
-							bool tmpeX = X1.find(*s) != X1.end();
-							if (tmpeX && BexistX && visE[*e] == 2 || visE[*e] == 0) delta[new_psc.SMap[*s]] -= new_psc.profit[*e];
-							else if (BexistX && (!tmpeX) && visE[*e] == 1 || (!BexistX) && tmpeX && visE[*e] == 1)
+					int sizeE = visE[*e].size();
+					if (sizeE == 2 && BexistX) {
+						for (auto s = visE[*e].begin(); s != visE[*e].end(); ++s)
+							if (*s != bestSet) delta[new_psc.SMap[*s]] -= new_psc.profit[*e];
+					}
+					else if (sizeE == 1) {
+						if (BexistX) {
+							for (auto s = e2Set[*e].begin(); s != e2Set[*e].end(); ++s) {
+								if (*s == bestSet) continue;
 								delta[new_psc.SMap[*s]] += new_psc.profit[*e];
+							}
 						}
+						else {
+							auto s = visE[*e].begin();
+							delta[new_psc.SMap[*s]] += new_psc.profit[*e];
+						}
+					}
+					else if (sizeE == 0) {
+						for (auto s = e2Set[*e].begin(); s != e2Set[*e].end(); ++s)
+							if (*s != bestSet) delta[new_psc.SMap[*s]] -= new_psc.profit[*e];
 					}
 				}
 
 				//更改X1
 				if (X1.find(bestSet) != X1.end()) { //在当前解中，移出去
 					X1.erase(bestSet);
-					visG[curG] -= 1;
+					visG[curG].erase(bestSet);
 					for (auto eid = new_psc.coveringSet[idx].begin(); eid != new_psc.coveringSet[idx].end(); ++eid) {
-						visE[*eid] -= 1;
+						visE[*eid].erase(bestSet);
 					}
 				}
 				else { //不在当前解中，移进来
 					X1.insert(bestSet);
-					visG[curG] += 1;
+					visG[curG].insert(bestSet);
 					for (auto eid = new_psc.coveringSet[idx].begin(); eid != new_psc.coveringSet[idx].end(); ++eid) {
-						visE[*eid] += 1;
+						visE[*eid].insert(bestSet);
 					}
 				}
 			};
@@ -260,19 +285,26 @@ namespace pmscp {
 				int iterCnt = 0, non_improve = 0; //记录迭代轮次和未改进次数
 				Sets Xb = X1;
 				double fb = f_X1;
-				//加一点注释
 				vector<double> tmpDel = delta;
-				vector<int> tmpvise = visE;
-				vector<int> tmpvisg = visG;
+				vector<unordered_set<SetId>> tmpvise = visE;
+				vector<unordered_set<SetId>> tmpvisg = visG;
 				while (non_improve < beta && restMilliSec() > 0) {
 					iterCnt += 1;
 					int bestSet;
 					double maxProfit = -1e8;
 					// 这里确定禁忌表和特赦准则的问题
+					//禁忌选择的是
+					// 1、非禁忌动作的最优值和
+					// 2、禁忌动作中最好的能够改进历史结果的值
+					// 选择1和2中更好的那个
 					for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 						SetId sid = (*setN).first;
 						int idx = (*setN).second;
-						if (delta[idx] > maxProfit && (tabuList[idx] < iterCnt || fb < f_X1 + delta[idx])) {
+						if (tabuList[idx] < iterCnt && delta[idx] > maxProfit) {
+							maxProfit = delta[idx];
+							bestSet = sid;
+						}
+						else if (tabuList[idx] >= iterCnt && fb < f_X1 + delta[idx] && delta[idx] > maxProfit) {
 							maxProfit = delta[idx];
 							bestSet = sid;
 						}
@@ -285,8 +317,8 @@ namespace pmscp {
 					flip(X1, bestSet);
 
 					if (X1.find(bestSet) != X1.end())
-						tabuList[bestSet] = iterCnt + fastRand(1, 6); //这个禁忌值偏大了？
-					else tabuList[bestSet] = iterCnt + new_psc.SMap.size();
+						tabuList[bestSet] = iterCnt + fastRand(1, 6); 
+					else tabuList[bestSet] = iterCnt + new_psc.SMap.size(); //这个禁忌值偏大了？
 					
 					if (fabs(fb - f_X1) < 0.0001 || fb > f_X1) {
 						non_improve += 1;
@@ -307,14 +339,15 @@ namespace pmscp {
 				visE = tmpvise;
 			};
 
-			// 需要一个禁忌操作吗？
+			//使用δ'，使性能得到提升
 			auto SwapDescentSearch = [&](Sets& X1, double& f_X1) {
 				Sets Xb = X1;
 				double fb = f_X1;
 				vector<double> tmpDel = delta;
-				vector<int> tmpvise = visE;
-				vector<int> tmpvisg = visG;
+				vector<unordered_set<SetId>> tmpvise = visE;
+				vector<unordered_set<SetId>> tmpvisg = visG;
 				Sets Nx1, tmpX = X1;
+				vector<double> delta1 = delta;
 
 				for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 					SetId sid = (*setN).first;
@@ -322,6 +355,7 @@ namespace pmscp {
 					Nx1.insert(sid);
 				}
 
+				// 计算δ'
 				int non_improve = 0;
 				int iter_cnt = 0;
 				while (non_improve == 0 && restMilliSec() > 0) {
@@ -329,28 +363,47 @@ namespace pmscp {
 					non_improve = 1;
 					int bestS1, bestS2;
 					double bestdp = -1e8;
+					double dsum1 = 0, dsum = 0;
 					if (tmpX.size() == 0) continue;
 
 					//选择最佳邻域动作
 					for (auto s1 = X1.begin(); s1 != X1.end(); ++s1) {
-						int idx1 = new_psc.SMap[*s1];
-						double dp1 = delta[idx1];
-						// flip(s1, X1, Nx1) ->delta
-						
-						int s2;
-						for (auto tmps = Nx1.begin(); tmps != Nx1.end(); ++tmps) {
-							int curg = set2G[idx1];
-							int idx2 = new_psc.SMap[*tmps];
-							double dpn = delta[idx2];
-							if (visG[curg] == 1 && set2G[idx2] == curg)
-								dpn -= new_psc.GCost;
-
-							for (auto e = new_psc.coveringSet[idx1].begin(); e != new_psc.coveringSet[idx1].end(); ++e) {
-								if (visE[*e] == 1 && e2Set[*e].find(*tmps) != e2Set[*e].end())
-									dpn += new_psc.profit[*e];
+						delta1 = delta;
+						int curG = set2G[*s1];
+						//计算组
+						if (visG[curG].size() == 1 && (*visG[curG].begin() == *s1)) {
+							for (auto s2 = new_psc.group[curG].begin(); s2 != new_psc.group[curG].end(); ++s2) {
+								if (X1.find(*s2) == X1.end())
+									delta1[*s2] -= new_psc.GCost;
 							}
+						}
+						//计算元素收益
+						for (auto e = new_psc.coveringSet[*s1].begin(); e != new_psc.coveringSet[*s1].end(); ++e) {
+							auto sets = e2Set[*e];
+							if (visE[*e].size() == 1 && (*visE[*e].begin() == *s1)) {
+								for (auto s2 = sets.begin(); s2 != sets.end(); ++s2)
+									if (X1.find(*s2) == X1.end())
+										delta1[*s2] += new_psc.profit[*e];
+							}
+						}
+
+						/*int idx1 = new_psc.SMap[*s1];
+						double dp1 = delta[idx1];*/
+						// flip(s1, X1, Nx1) ->delta
+						for (auto tmps = Nx1.begin(); tmps != Nx1.end(); ++tmps) {
+							//int curg = set2G[idx1];
+							//int idx2 = new_psc.SMap[*tmps];
+							//double dpn = delta[idx2];
+							//if (visG[curg].size() == 1 && set2G[idx2] == curg)
+							//	dpn -= new_psc.GCost;
+							//// 最好能够把这个for循环去掉，可以进一步提升性能
+							//for (auto e = new_psc.coveringSet[idx1].begin(); e != new_psc.coveringSet[idx1].end(); ++e) {
+							//	if (visE[*e].size() == 1 && e2Set[*e].find(*tmps) != e2Set[*e].end())
+							//		dpn += new_psc.profit[*e];
+							//}
+							//dsum1 = dp1 + dpn;
 							
-							double dsum = dp1 + dpn;
+							dsum = delta[*s1] + delta1[*tmps];
 							if (dsum > bestdp) {
 								bestS1 = *s1;
 								bestS2 = *tmps;
@@ -392,8 +445,8 @@ namespace pmscp {
 				double f_b = f_X1;
 				int non_improve = 0;
 				vector<double> tmpDel = delta;
-				vector<int> tmpvise = visE;
-				vector<int> tmpvisG = visG;
+				vector<unordered_set<SetId>> tmpvise = visE;
+				vector<unordered_set<SetId>> tmpvisG = visG;
 				int iter_cnt = 0;
 				while (non_improve == 0 && restMilliSec() > 0) {
 					iter_cnt += 1;
@@ -428,38 +481,33 @@ namespace pmscp {
 				std::cout << "Elapsed time: " << elapsed.count() / 1000.0 << " s" << std::endl;*/
 			};
 
+			// 这里扰动操作要注意，p = 0.4，让扰动幅度更大
 			auto Perturbation = [&](Sets& tmpX, int& t_type, double& f_tmpX) {
-				
 				if (fastRand(10000) / 10000.0 < gamma[0]) {
 					// 执行Set_Pertubation
 					t_type = 0;
 					Sets tmpX2 = tmpX;
-					vector<int> Ns;
-					/*for (int s = 0; s < new_psc.setNum; ++s) 
-						if (tmpX.find(s) == tmpX.end()) Ns.push_back(s);*/
+					unordered_set<SetId> Ns;
 					for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 						SetId sid = (*setN).first;
-						if (tmpX.find(sid) == tmpX.end()) Ns.push_back(sid);
+						if (tmpX.find(sid) == tmpX.end()) Ns.insert(sid);
 					}
 
-					int len = Ns.size();
+					
 					for (auto s = tmpX2.begin(); s != tmpX2.end(); ++s) {
+						int len = Ns.size();
 						int j = new_psc.SMap[*s];
 						if (len == 0) break;
-						bool isDel = fastRand(10000) / 10000.0 < 0.3;
-						if (isDel) {
-							//tmpX.erase(*s);
+						double isDel = fastRand(10000) / 10000.0;
+						if (isDel < 0.4) {
 							f_tmpX += delta[j];
 							flip(tmpX, *s);
 							int idx = fastRand(len);
-							//tmpX.insert(Ns[idx]);
-							SetId sid = Ns[idx];
-							int sidx = new_psc.SMap[sid];
+							auto sid = next(Ns.begin(), idx);
+							int sidx = new_psc.SMap[*sid];
 							f_tmpX += delta[sidx];
-							flip(tmpX, sid);
-							Ns[idx] = Ns[len - 1];
-							Ns.pop_back();
-							len -= 1;
+							flip(tmpX, *sid);
+							Ns.erase(*sid);
 						}
 					}
 				}
@@ -467,11 +515,11 @@ namespace pmscp {
 					// 执行Group_Pertubation
 					t_type = 1;
 					Sets tmpX2 = tmpX;
-					vector<int> Z, Nz; //Z表示 组中的覆盖集与X的交集不为空的组序号
-					double p = 0.3;
+					unordered_set<int> Z, Nz; //Z表示 组中的覆盖集与X的交集不为空的组序号
+					double p = 0.4;
 					for (int g = 0; g < new_psc.groupNum; g++) {
-						if (visG[g] >= 1) Z.push_back(g);
-						else Nz.push_back(g);
+						if (visG[g].size() >= 1) Z.insert(g);
+						else Nz.insert(g);
 					}
 					int Zlen = Z.size();
 					int tochs = max(int(p * Zlen), 1);
@@ -479,10 +527,9 @@ namespace pmscp {
 						int len = Z.size();
 						if (len == 0) break;
 						int idx = fastRand(len);
-						int cg = Z[idx]; // cg为选出的组
-						Z[idx] = Z[len - 1];
-						Z.pop_back();
-						for (auto s = new_psc.group[cg].begin(); s != new_psc.group[cg].end(); ++s) {
+						auto cg = next(Z.begin(), idx); // cg为选出的组
+						Z.erase(*cg);
+						for (auto s = new_psc.group[*cg].begin(); s != new_psc.group[*cg].end(); ++s) {
 							if (tmpX2.find(*s) != tmpX2.end()) {
 								//tmpX.erase(*s);
 								f_tmpX += delta[new_psc.SMap[*s]];
@@ -498,12 +545,11 @@ namespace pmscp {
 							break;
 						}
 						int idx = fastRand(len);
-						int cg = Nz[idx];
-						Nz[idx] = Nz[len - 1];
-						Nz.pop_back();
+						auto cg = next(Nz.begin(), idx);
+						Nz.erase(*cg);
 
 						int fcnt = tmpX2.size() / Zlen;
-						auto tmpg = new_psc.group[cg];
+						auto tmpg = new_psc.group[*cg];
 						for (int j = 0; j < fcnt; ++j) {
 							int idx = fastRand(tmpg.size());
 							auto it = next(tmpg.begin(), idx);
@@ -527,13 +573,12 @@ namespace pmscp {
 				int iter_cnt = 0;
 				double tmpr = 0;
 				vector<double> tmpDel = delta;
-				vector<int> tmpvise = visE;
-				vector<int> tmpvisG = visG;
+				vector<unordered_set<SetId>> tmpvise = visE;
+				vector<unordered_set<SetId>> tmpvisG = visG;
 				while (non_improve < omega && restMilliSec() > 0) {
 					iter_cnt += 1;
 					TwoPhaseLS(Xp, fp);
-					if (fp - tmp_f >= -0.0001 && fp - tmp_f <= 0.0001) non_improve += 1;
-					else if (fp < tmp_f) non_improve += 1;
+					if (abs(fp - tmp_f) <= 0.0001 || fp < tmp_f) non_improve += 1;
 					else {
 						// 更新γ
 						if (t_type == 0) d1 += 1;
@@ -591,31 +636,35 @@ namespace pmscp {
 				// 计算收益值
 				f_X0 = calProfit(X0, new_psc);
 				// 计算δ函数 和visG、visE
-				fill(visG.begin(), visG.end(), 0);
-				fill(visE.begin(), visE.end(), 0);
 				fill(delta.begin(), delta.end(), 0);
+				for (ElemId eid = 0; eid < new_psc.elemNum; ++eid)
+					visE[eid].clear();
+				for (int gid = 0; gid < new_psc.groupNum; ++gid)
+					visG[gid].clear();
+
 				for (auto s = X0.begin(); s != X0.end(); ++s) {
-					visG[set2G[*s]] += 1;
+					visG[set2G[*s]].insert(*s);
 					for (auto eid = new_psc.coveringSet[*s].begin(); eid != new_psc.coveringSet[*s].end(); ++eid)
-						visE[*eid] += 1;
+						visE[*eid].insert(*s);
 				}
+				// 调试到delta的计算
 				for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 					SetId sid = (*setN).first;
 					int idx = (*setN).second;
 					// 当前覆盖集位于初始解中
 					if (X0.find(sid) != X0.end()) {
 						for (auto eid = new_psc.coveringSet[idx].begin(); eid != new_psc.coveringSet[idx].end(); ++eid) {
-							if (visE[*eid] == 1) delta[idx] -= new_psc.profit[*eid];
+							if (visE[*eid].size() == 1) delta[idx] -= new_psc.profit[*eid];
 						}
 						delta[idx] += new_psc.SCost[idx];
-						if (visG[set2G[idx]] == 1) delta[idx] += new_psc.GCost;
+						if (visG[set2G[idx]].size() == 1) delta[idx] += new_psc.GCost;
 					}
 					else { //当前覆盖集不在初始解中
 						for (auto eid = new_psc.coveringSet[idx].begin(); eid != new_psc.coveringSet[idx].end(); ++eid) {
-							if (visE[*eid] == 0) delta[idx] += new_psc.profit[*eid];
+							if (visE[*eid].size() == 0) delta[idx] += new_psc.profit[*eid];
 						}
 						delta[idx] -= new_psc.SCost[idx];
-						if (visG[set2G[idx]] == 0) delta[idx] -= new_psc.GCost;
+						if (visG[set2G[idx]].size() == 0) delta[idx] -= new_psc.GCost;
 					}
 				}
 				
@@ -652,3 +701,4 @@ namespace pmscp {
 		return Solver().solve(output, input, restMilliSec, seed);
 	}
 }
+
