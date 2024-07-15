@@ -146,6 +146,8 @@ namespace pmscp {
 			vector<unordered_set<SetId>> e2Set(new_psc.elemNum); //确定element由哪些覆盖集所覆盖
 			double d0 = 50, d1 = 0, d2 = 0; //确定扰动的选择
 
+			double times = 0, times2 = 0, times3 = 0, times4 = 0;
+
 			for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 				SetId sid = (*setN).first; 
 				int idx = (*setN).second;
@@ -173,14 +175,19 @@ namespace pmscp {
 						// 这是一个可能改进的地方, 使用堆会提高性能
 						// 做一些修改
 						double maxP = 0;
+						vector<SetId> sids;
 						for (auto inflect = tmpS.begin(); inflect != tmpS.end(); ++inflect) {
 							SetId sid1 = (*inflect);
 							int idx = new_psc.SMap[sid1];
 							if (maxP < eta[idx]) {
+								sids.clear();
 								maxP = eta[idx];
-								sid = sid1;
+								//sid = sid1;
+								sids.push_back(sid1);
 							}
+							else if (abs(maxP - eta[idx]) < 0.0001) sids.push_back(sid1);
 						}
+						sid = sids[fastRand(sids.size())];
 					}
 					else {
 						auto it = next(tmpS.begin(), fastRand(tmpS.size()));
@@ -290,8 +297,9 @@ namespace pmscp {
 				vector<unordered_set<SetId>> tmpvisg = visG;
 				while (non_improve < beta && restMilliSec() > 0) {
 					iterCnt += 1;
-					int bestSet;
-					double maxProfit = -1e8;
+					SetId bestSet;
+					unordered_set<SetId> bestSet1, bestSet2;
+					double maxProfit1 = -1e8, maxProfit2 = -1e8, maxProfit;
 					// 这里确定禁忌表和特赦准则的问题
 					//禁忌选择的是
 					// 1、非禁忌动作的最优值和
@@ -300,21 +308,52 @@ namespace pmscp {
 					for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 						SetId sid = (*setN).first;
 						int idx = (*setN).second;
-						if (tabuList[idx] < iterCnt && delta[idx] > maxProfit) {
+						/*if (tabuList[idx] < iterCnt && delta[idx] > maxProfit) {
 							maxProfit = delta[idx];
 							bestSet = sid;
 						}
 						else if (tabuList[idx] >= iterCnt && fb < f_X1 + delta[idx] && delta[idx] > maxProfit) {
 							maxProfit = delta[idx];
 							bestSet = sid;
+						}*/
+
+						if (tabuList[idx] < iterCnt) { //非禁忌操作
+							if (delta[idx] > maxProfit1) {
+								bestSet1.clear();
+								maxProfit1 = delta[idx];
+								bestSet1.insert(sid);
+							}
+							else if (abs(delta[idx] - maxProfit1) < 0.0001) bestSet1.insert(sid);
+						}
+						else { //禁忌操作
+							if (fb < f_X1 + delta[idx] && delta[idx] > maxProfit2) {
+								bestSet2.clear();
+								maxProfit2 = delta[idx];
+								bestSet2.insert(sid);
+							}
+							else if (abs(delta[idx] - maxProfit2) < 0.0001) bestSet2.insert(sid);
 						}
 					}
+					
+					if (maxProfit1 > maxProfit2) {
+						maxProfit = maxProfit1;
+						bestSet = *next(bestSet1.begin(), fastRand(bestSet1.size()));
+					} 
+					else {
+						maxProfit = maxProfit2;
+						bestSet = *next(bestSet2.begin(), fastRand(bestSet2.size()));
+					} 
 
 					if (maxProfit == -1e8) continue;
 					f_X1 = f_X1 + maxProfit;
 
 					// 调整δ, 更改X1和TabuList
+					auto start2 = std::chrono::high_resolution_clock::now();
 					flip(X1, bestSet);
+
+					auto end2 = std::chrono::high_resolution_clock::now();
+					std::chrono::duration<double, std::milli> elapsed2 = end2 - start2;
+					times2 += elapsed2.count();
 
 					if (X1.find(bestSet) != X1.end())
 						tabuList[bestSet] = iterCnt + fastRand(1, 6); 
@@ -361,7 +400,8 @@ namespace pmscp {
 				while (non_improve == 0 && restMilliSec() > 0) {
 					iter_cnt += 1;
 					non_improve = 1;
-					int bestS1, bestS2;
+					SetId bestS1, bestS2;
+					vector<pair<SetId, SetId>> bestSs;
 					double bestdp = -1e8;
 					double dsum1 = 0, dsum = 0;
 					if (tmpX.size() == 0) continue;
@@ -373,7 +413,7 @@ namespace pmscp {
 						//计算组
 						if (visG[curG].size() == 1 && (*visG[curG].begin() == *s1)) {
 							for (auto s2 = new_psc.group[curG].begin(); s2 != new_psc.group[curG].end(); ++s2) {
-								if (X1.find(*s2) == X1.end())
+								if(*s2 != *s1)
 									delta1[*s2] -= new_psc.GCost;
 							}
 						}
@@ -382,43 +422,42 @@ namespace pmscp {
 							auto sets = e2Set[*e];
 							if (visE[*e].size() == 1 && (*visE[*e].begin() == *s1)) {
 								for (auto s2 = sets.begin(); s2 != sets.end(); ++s2)
-									if (X1.find(*s2) == X1.end())
+									if(*s2 != *s1)
 										delta1[*s2] += new_psc.profit[*e];
 							}
 						}
 
-						/*int idx1 = new_psc.SMap[*s1];
-						double dp1 = delta[idx1];*/
 						// flip(s1, X1, Nx1) ->delta
 						for (auto tmps = Nx1.begin(); tmps != Nx1.end(); ++tmps) {
-							//int curg = set2G[idx1];
-							//int idx2 = new_psc.SMap[*tmps];
-							//double dpn = delta[idx2];
-							//if (visG[curg].size() == 1 && set2G[idx2] == curg)
-							//	dpn -= new_psc.GCost;
-							//// 最好能够把这个for循环去掉，可以进一步提升性能
-							//for (auto e = new_psc.coveringSet[idx1].begin(); e != new_psc.coveringSet[idx1].end(); ++e) {
-							//	if (visE[*e].size() == 1 && e2Set[*e].find(*tmps) != e2Set[*e].end())
-							//		dpn += new_psc.profit[*e];
-							//}
-							//dsum1 = dp1 + dpn;
-							
 							dsum = delta[*s1] + delta1[*tmps];
 							if (dsum > bestdp) {
-								bestS1 = *s1;
+								/*bestS1 = *s1;
 								bestS2 = *tmps;
+								bestdp = dsum;*/
+								bestSs.clear();
+								bestSs.push_back(pair<SetId, SetId>(*s1, *tmps));
 								bestdp = dsum;
 							}
+							else if (abs(dsum - bestdp) < 0.0001) bestSs.push_back(pair<SetId, SetId>(*s1, *tmps));
 						}
 					}
+					int sidx = fastRand(bestSs.size());
+					bestS1 = bestSs[sidx].first;
+					bestS2 = bestSs[sidx].second;
 					//tmpX.erase(bestS1);
-					Nx1.erase(bestS2);  //可以尝试只对Nx1做删除操作
+					Nx1.erase(bestS2);
+					//Nx1.insert(bestS1);
 
 					// 以上动作执行完后，确定 s1，s2为最佳邻域动作，执行这些动作并修改相应的值即可
 					//f_X1 += delta[bestS1];
+					auto start2 = std::chrono::high_resolution_clock::now();
 					flip(X1, bestS1);
 					//f_X1 += delta[bestS2];
 					flip(X1, bestS2);
+					auto end2 = std::chrono::high_resolution_clock::now();
+					std::chrono::duration<double, std::milli> elapsed2 = end2 - start2;
+					times2 += elapsed2.count();
+					
 					f_X1 += bestdp;
 
 					if (fb < f_X1) {
@@ -440,7 +479,6 @@ namespace pmscp {
 
 			auto TwoPhaseLS = [&](Sets& X1, double& f_X1) {
 				/*auto start1 = std::chrono::high_resolution_clock::now();*/
-
 				Sets Xb = X1;
 				double f_b = f_X1;
 				int non_improve = 0;
@@ -448,15 +486,23 @@ namespace pmscp {
 				vector<unordered_set<SetId>> tmpvise = visE;
 				vector<unordered_set<SetId>> tmpvisG = visG;
 				int iter_cnt = 0;
+				//if(restMilliSec() > 0){
 				while (non_improve == 0 && restMilliSec() > 0) {
 					iter_cnt += 1;
 					non_improve = 1;
+					auto start2 = std::chrono::high_resolution_clock::now();
 					FlipTabuSearch(X1, f_X1);
+					auto end2 = std::chrono::high_resolution_clock::now();
+					std::chrono::duration<double, std::milli> elapsed2 = end2 - start2;
+					times3 += elapsed2.count();
 					/*cerr << "after exe Tabu" << endl;
 					bool testDel1 = testDelta(X1, new_psc, delta);*/
 
+					start2 = std::chrono::high_resolution_clock::now();
 					SwapDescentSearch(X1, f_X1);
-					
+					end2 = std::chrono::high_resolution_clock::now();
+					elapsed2 = end2 - start2;
+					times4 += elapsed2.count();
 					//cerr << "after exe Swap" << endl;
 					//bool testDel2 = testDelta(X1, new_psc, delta);
 
@@ -481,7 +527,6 @@ namespace pmscp {
 				std::cout << "Elapsed time: " << elapsed.count() / 1000.0 << " s" << std::endl;*/
 			};
 
-			// 这里扰动操作要注意，p = 0.4，让扰动幅度更大
 			auto Perturbation = [&](Sets& tmpX, int& t_type, double& f_tmpX) {
 				if (fastRand(10000) / 10000.0 < gamma[0]) {
 					// 执行Set_Pertubation
@@ -499,7 +544,7 @@ namespace pmscp {
 						int j = new_psc.SMap[*s];
 						if (len == 0) break;
 						double isDel = fastRand(10000) / 10000.0;
-						if (isDel < 0.4) {
+						if (isDel < 0.3) {
 							f_tmpX += delta[j];
 							flip(tmpX, *s);
 							int idx = fastRand(len);
@@ -516,7 +561,7 @@ namespace pmscp {
 					t_type = 1;
 					Sets tmpX2 = tmpX;
 					unordered_set<int> Z, Nz; //Z表示 组中的覆盖集与X的交集不为空的组序号
-					double p = 0.4;
+					double p = 0.3;
 					for (int g = 0; g < new_psc.groupNum; g++) {
 						if (visG[g].size() >= 1) Z.insert(g);
 						else Nz.insert(g);
@@ -528,8 +573,9 @@ namespace pmscp {
 						if (len == 0) break;
 						int idx = fastRand(len);
 						auto cg = next(Z.begin(), idx); // cg为选出的组
+						int icg = *cg;
 						Z.erase(*cg);
-						for (auto s = new_psc.group[*cg].begin(); s != new_psc.group[*cg].end(); ++s) {
+						for (auto s = new_psc.group[icg].begin(); s != new_psc.group[icg].end(); ++s) {
 							if (tmpX2.find(*s) != tmpX2.end()) {
 								//tmpX.erase(*s);
 								f_tmpX += delta[new_psc.SMap[*s]];
@@ -546,10 +592,11 @@ namespace pmscp {
 						}
 						int idx = fastRand(len);
 						auto cg = next(Nz.begin(), idx);
+						int icg = *cg;
 						Nz.erase(*cg);
 
 						int fcnt = tmpX2.size() / Zlen;
-						auto tmpg = new_psc.group[*cg];
+						auto tmpg = new_psc.group[icg];
 						for (int j = 0; j < fcnt; ++j) {
 							int idx = fastRand(tmpg.size());
 							auto it = next(tmpg.begin(), idx);
@@ -577,10 +624,16 @@ namespace pmscp {
 				vector<unordered_set<SetId>> tmpvisG = visG;
 				while (non_improve < omega && restMilliSec() > 0) {
 					iter_cnt += 1;
+					auto start2 = std::chrono::high_resolution_clock::now();
 					TwoPhaseLS(Xp, fp);
+					auto end2 = std::chrono::high_resolution_clock::now();
+					std::chrono::duration<double, std::milli> elapsed2 = end2 - start2;
+					times += elapsed2.count();
+					//cerr << elapsed2.count() / 1000.0 << endl;
+
 					if (abs(fp - tmp_f) <= 0.0001 || fp < tmp_f) non_improve += 1;
 					else {
-						// 更新γ
+						// 更新γ 
 						if (t_type == 0) d1 += 1;
 						else if (t_type == 1) d2 += 1;
 						gamma[0] = (d0 + d1) / (2 * d0 + d1 + d2); 
@@ -611,6 +664,7 @@ namespace pmscp {
 						tmpvisG = visG;
 						non_improve = 0; 
 						cerr << "当前最好结果为: " << tmp_f << endl;
+						cerr << "d1: " << d1 << "; d2: " << d2 << endl;
 					}
 					
 					Xp = tmpX;
@@ -622,6 +676,15 @@ namespace pmscp {
 				}
 				cerr << "IntensifivationDrivenILS 执行次数: " << iter_cnt << endl;
 				f_X0 = tmp_f;
+
+				cerr << "TwoPhaseLS的执行时间：" << times / 1000.0 << " s" << endl;
+				cerr << "flip操作执行时间: " << times2 / 1000.0 << " s" << endl;
+				cerr << "Tabu Search时间为: " << times3 / 1000.0 << " s" << endl;
+				cerr << "Swap Search时间为: " << times4 / 1000.0 << " s" << endl;
+				times = 0;
+				times2 = 0;
+				times3 = 0;
+				times4 = 0;
 
 				auto end = std::chrono::high_resolution_clock::now();
 				std::chrono::duration<double, std::milli> elapsed = end - start;
@@ -647,7 +710,7 @@ namespace pmscp {
 					for (auto eid = new_psc.coveringSet[*s].begin(); eid != new_psc.coveringSet[*s].end(); ++eid)
 						visE[*eid].insert(*s);
 				}
-				// 调试到delta的计算
+
 				for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 					SetId sid = (*setN).first;
 					int idx = (*setN).second;
