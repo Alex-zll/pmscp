@@ -301,13 +301,14 @@ namespace pmscp {
 					unordered_set<SetId> bestSet1, bestSet2;
 					double maxProfit1 = -1e8, maxProfit2 = -1e8, maxProfit;
 					// 这里确定禁忌表和特赦准则的问题
-					//禁忌选择的是
+					// 禁忌选择的是
 					// 1、非禁忌动作的最优值和
 					// 2、禁忌动作中最好的能够改进历史结果的值
 					// 选择1和2中更好的那个
 					for (auto setN = new_psc.SMap.begin(); setN != new_psc.SMap.end(); ++setN) {
 						SetId sid = (*setN).first;
-						int idx = (*setN).second;
+						int idx = (*setN).second; 
+
 						/*if (tabuList[idx] < iterCnt && delta[idx] > maxProfit) {
 							maxProfit = delta[idx];
 							bestSet = sid;
@@ -397,9 +398,9 @@ namespace pmscp {
 				// 计算δ'
 				int non_improve = 0;
 				int iter_cnt = 0;
-				while (non_improve == 0 && restMilliSec() > 0) {
+				while (non_improve < 1 && restMilliSec() > 0) {
 					iter_cnt += 1;
-					non_improve = 1;
+					non_improve += 1;
 					SetId bestS1, bestS2;
 					vector<pair<SetId, SetId>> bestSs;
 					double bestdp = -1e8;
@@ -538,22 +539,26 @@ namespace pmscp {
 						if (tmpX.find(sid) == tmpX.end()) Ns.insert(sid);
 					}
 
-					
+					int rmv_n = 0;
 					for (auto s = tmpX2.begin(); s != tmpX2.end(); ++s) {
-						int len = Ns.size();
 						int j = new_psc.SMap[*s];
-						if (len == 0) break;
 						double isDel = fastRand(10000) / 10000.0;
 						if (isDel < 0.3) {
 							f_tmpX += delta[j];
 							flip(tmpX, *s);
-							int idx = fastRand(len);
-							auto sid = next(Ns.begin(), idx);
-							int sidx = new_psc.SMap[*sid];
-							f_tmpX += delta[sidx];
-							flip(tmpX, *sid);
-							Ns.erase(*sid);
+							rmv_n += 1;	
 						}
+					}
+					for (int i = 0; i < rmv_n; ++i) {
+						CSet tmpSM = new_psc.SMap;
+						int len = tmpSM.size();
+						auto s = next(tmpSM.begin(), fastRand(len));
+						SetId sid = (*s).first;
+						if (tmpX2.find(sid) == tmpX2.end()) {
+							f_tmpX += delta[(*s).second];
+							flip(tmpX, sid);
+						} 
+						tmpSM.erase(sid);
 					}
 				}
 				else {
@@ -665,6 +670,11 @@ namespace pmscp {
 						non_improve = 0; 
 						cerr << "当前最好结果为: " << tmp_f << endl;
 						cerr << "d1: " << d1 << "; d2: " << d2 << endl;
+						cerr << "IILS 迭代次数为: " << iter_cnt << endl;
+						cerr << "TwoPhaseLS的执行时间：" << times / 1000.0 << " s" << endl;
+						cerr << "flip操作总执行时间: " << times2 / 1000.0 << " s" << endl;
+						cerr << "Tabu Search总时间为: " << times3 / 1000.0 << " s" << endl;
+						cerr << "Swap Search总时间为: " << times4 / 1000.0 << " s" << endl << endl;
 					}
 					
 					Xp = tmpX;
@@ -696,6 +706,7 @@ namespace pmscp {
 				// 获得初始解后，要确定δ向量和初始解的收益值，即f_X0
 				double f_X0 = 0;
 				X0 = LearningDrivenInitialization();
+				cerr << "初始解构造完成" << endl;
 				// 计算收益值
 				f_X0 = calProfit(X0, new_psc);
 				// 计算δ函数 和visG、visE
