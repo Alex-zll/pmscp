@@ -3,6 +3,9 @@
 #include <string>
 #include <sstream>
 #include <chrono>
+#include <ctime>
+#include <thread>
+#include <Windows.h>
 
 #include "pmscp.h"
 
@@ -61,7 +64,7 @@ void loadInput(string loadFile, PSetCovering& psc) {
 					// 转换类型并存储
 					ElemId eid = std::stoi(firstPartString);
 					Money ep = std::stod(secondPartString);
-					elms.insert(eid);
+					elms.push_back(eid);
 					psc.profit[eid] = ep;
 				}
 				else {
@@ -69,7 +72,7 @@ void loadInput(string loadFile, PSetCovering& psc) {
 				}
 			}
 			psc.coveringSet.push_back(elms);
-			psc.SMap[sid] = sid;
+			//psc.SMap[sid] = sid;
 			sid++;
 		}
 
@@ -82,6 +85,9 @@ void saveOutput(string outputFile, PSetCovering psc, Sets X) {
 
 }
 
+
+
+
 void saveToCSV(string fileName, string testFile, int seed, double result) {
 	// 打开文件以追加内容
 	std::ofstream outfile;
@@ -89,7 +95,7 @@ void saveToCSV(string fileName, string testFile, int seed, double result) {
 
 	// 检查文件是否成功打开
 	if (!outfile.is_open()) {
-		std::cerr << "无法打开文件：" << fileName << std::endl;
+		std::cerr << "open file error：" << fileName << std::endl;
 		return ;
 	}
 
@@ -104,7 +110,7 @@ void saveToCSV(string fileName, string testFile, int seed, double result) {
 	// 关闭文件流
 	outfile.close();
 
-	std::cout << "数据追加写入完成" << std::endl;
+	std::cout << "data append success" << std::endl;
 
 }
 
@@ -115,44 +121,55 @@ void test(string path, long long secTimeout) {
 	Sets X;
 	double result;
 	steady_clock::time_point endTime = steady_clock::now() + seconds(secTimeout);
-	cerr << "solving problem " << endl;
-	result = solvePMForSetCovering(X, psc, [&]() { return duration_cast<milliseconds>(endTime - steady_clock::now()).count(); }, 123234);
 
+	size_t last_slash_idx = path.find_last_of("/");
+	string testFile = path.substr(last_slash_idx + 1);
+	//calRatio(psc, testFile);
+	//calCoveredRatio(psc, testFile);
+	cerr << "solving problem " << endl;
+	result = solvePMForSetCovering(X, psc, [&]() { return duration_cast<milliseconds>(endTime - steady_clock::now()).count(); }, 1735180925);
+	//calElement2Group(psc);
 }
 
-void test(string path, long long secTimeout, int seed) {
+void test(string path, long long secTimeout, int seed, string fileName) {
 	PSetCovering psc;
 	cerr << "loading input " << endl;
 	loadInput(path, psc);
 	Sets X;
 	double result;
 	steady_clock::time_point endTime = steady_clock::now() + seconds(secTimeout);
+	size_t last_slash_idx = path.find_last_of("\\");
+	if (last_slash_idx == string::npos) last_slash_idx = path.find_last_of("/");
+	string testFile = path.substr(last_slash_idx + 1);
+
 	cerr << "solving problem " << endl;
 	result = solvePMForSetCovering(X, psc, [&]() { return duration_cast<milliseconds>(endTime - steady_clock::now()).count(); }, seed);
-
-	string fileName = "D:/0HustWork/hust-exercise/PMSCP/result.csv";
-	size_t last_slash_idx = path.find_last_of("/");
-	string testFile = path.substr(last_slash_idx + 1);
 	saveToCSV(fileName, testFile, seed, result);
 }
 
 int main(int argc, char* argv[]) {
 	if (argc < 2) {
-		string loadFile = "D:/0HustWork/hust-exercise/PMSCP_data/PMSCP-main/instances1/A1.txt";
-		long long secTimeout = 800;
+		string loadFile = "D:/0HustWork/hust-exercise/PMSCP_data/PMSCP-main/instances1/B5.txt";
+		long long secTimeout = 1500;
 		test(loadFile, secTimeout);
 	}
 	else {
 		string loadFile = argv[1];
-		int seed = atoi(argv[2]);
-		int secTimeout = atoi(argv[3]);
+		auto now = chrono::system_clock::now();
+		int seed = static_cast<int>(chrono::system_clock::to_time_t(now));
+		int secTimeout = atoi(argv[2]);
+		string fileName = argv[3];
 
-		test(loadFile, secTimeout, seed);
+		test(loadFile, secTimeout, seed, fileName);
 	}
-	
-
 
 	return 0;
 }
 
-// 56635765这个算例算不出来150386
+//扰动可以再试试别的想法
+
+//swap可以接受差解
+//只对受到影响子集的做交换
+
+//先尝试只对受到影响的子集做交换
+//再尝试swap可以接受差解，把扰动去掉
